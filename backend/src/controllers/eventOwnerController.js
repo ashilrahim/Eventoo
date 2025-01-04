@@ -77,11 +77,8 @@ export const createEventOwner = async (req, res) => {
  */
 export const getAllEventOwners = async (req, res) => {
   try {
-    const { status } = req.query; // Optionally filter by status (e.g., 'approved')
-
-    // Fetch event owners, optionally filtering by status if provided
-    const query = status ? { status } : {};
-    const eventOwners = await EventOwner.find(query)
+    // Fetch event owners with status 'approved' only
+    const eventOwners = await EventOwner.find({ status: 'approved' })
       .populate("userId", "name email") // Populate user details
       .populate("reviews.userId", "name"); // Populate reviewer details
 
@@ -101,13 +98,13 @@ export const getAllEventOwners = async (req, res) => {
 export const getEventOwnerById = async (req, res) => {
   try {
     const { id } = req.params;
-    const eventOwner = await EventOwner.findById(id)
+    const eventOwner = await EventOwner.findOne({ _id: id, status: 'approved' })
       .populate("userId", "name email")
       .populate("reviews.userId", "name");
     if (!eventOwner) {
       return res
         .status(404)
-        .json({ success: false, message: "Event Owner not found" });
+        .json({ success: false, message: "Event Owner not found or not approved" });
     }
     res.status(200).json({ success: true, data: eventOwner });
   } catch (error) {
@@ -148,87 +145,3 @@ export const updateEventOwner = async (req, res) => {
   }
 };
 
-/**
- * Delete an Event Owner
- */
-export const deleteEventOwner = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const deletedEventOwner = await EventOwner.findByIdAndDelete(id);
-    if (!deletedEventOwner) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Event Owner not found" });
-    }
-    res
-      .status(200)
-      .json({ success: true, message: "Event Owner deleted successfully" });
-  } catch (error) {
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to delete event owner", error });
-  }
-};
-
-/**
- * Add a Review to an Event Owner
- */
-export const addReview = async (req, res) => {
-  try {
-    const { id } = req.params; // EventOwner ID
-    const { userId, rating, comment } = req.body;
-
-    const eventOwner = await EventOwner.findById(id);
-    if (!eventOwner) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Event Owner not found" });
-    }
-
-    eventOwner.reviews.push({ userId, rating, comment });
-    eventOwner.averageRating =
-      eventOwner.reviews.reduce((sum, review) => sum + review.rating, 0) /
-      eventOwner.reviews.length;
-
-    await eventOwner.save();
-    res.status(201).json({ success: true, data: eventOwner });
-  } catch (error) {
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to add review", error });
-  }
-};
-
-/**
- * Update Event Owner Status
- */
-export const updateStatus = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
-
-    if (!["pending", "approved", "rejected"].includes(status)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid status" });
-    }
-
-    const eventOwner = await EventOwner.findByIdAndUpdate(
-      id,
-      { status },
-      { new: true }
-    );
-    if (!eventOwner) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Event Owner not found" });
-    }
-
-    res.status(200).json({ success: true, data: eventOwner });
-  } catch (error) {
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to update status", error });
-  }
-};
