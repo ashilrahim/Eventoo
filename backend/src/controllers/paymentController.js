@@ -34,3 +34,17 @@ export const processPayment = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+// Get all payments
+export const getAllPayments = async (req, res) => {
+  try {
+    const payments = await Payment.find()
+      .populate('userId', 'username email')
+      .populate('eventOwnerId', 'businessName')
+      .populate('bookingId', 'eventDate');
+
+    res.status(200).json(payments);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
