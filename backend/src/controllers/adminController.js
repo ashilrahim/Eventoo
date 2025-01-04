@@ -12,6 +12,9 @@ export const getAllUsers = async (req, res) => {
   }
 };
 
+
+
+
 // Get all event owners
 export const getAllEventOwners = async (req, res) => {
   try {
@@ -23,17 +26,7 @@ export const getAllEventOwners = async (req, res) => {
   }
 };
 
-// Get all bookings
-export const getAllBookings = async (req, res) => {
-  try {
-    const bookings = await Booking.find()
-      .populate('userId', 'username email')
-      .populate('eventOwnerId', 'businessName');
-    res.status(200).json(bookings);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
+
 
 // Approve or reject an event owner
 export const updateEventOwnerStatus = async (req, res) => {
@@ -83,31 +76,4 @@ export const deleteEventOwner = async (req, res) => {
   }
 };
 
-// Delete a booking
-export const deleteBooking = async (req, res) => {
-  try {
-    const booking = await Booking.findByIdAndDelete(req.params.id);
-    if (!booking) {
-      return res.status(404).json({ message: 'Booking not found' });
-    }
-
-    res.status(200).json({ message: 'Booking deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-// get payment details
-export const getAllPayments = async (req, res) => {
-    try {
-      const payments = await Payment.find()
-        .populate('userId', 'username email')
-        .populate('eventOwnerId', 'businessName')
-        .populate('bookingId', 'eventDate');
-  
-      res.status(200).json(payments);
-    } catch (error) {
-      res.status(500).json({ message: error.message });
-    }
-  };
   
