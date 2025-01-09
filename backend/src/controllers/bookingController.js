@@ -148,77 +148,145 @@ export const getBookingById = async (req, res) => {
   }
 };
 
-// Update a booking
 export const updateBooking = async (req, res) => {
   try {
-    const { eventDates, Days } = req.body; // You can specify fields you want to update
+    const { eventDates, Days } = req.body;
 
-    // If eventDate or Days are being updated, you may want to validate these values
-    if (eventDates && eventDates.length > 0 && Days) {
-      const newBookingDates = eventDates; // Assuming eventDate is an array of dates
-      const bookingDays = Days; // Number of days
+    // Validate eventDates and Days
+    if (!eventDates || !Array.isArray(eventDates) || eventDates.length === 0) {
+      return res
+        .status(400)
+        .json({ message: "You must provide an array of event dates." });
+    }
 
-      // Check if all dates are valid
-      const validDates = newBookingDates.every(
-        (date) => !isNaN(new Date(date).getTime())
-      );
-      if (!validDates) {
+    // Sort the eventDates
+    eventDates.sort((a, b) => new Date(a) - new Date(b));
+
+    // Check the number of dates matches Days
+    if (eventDates.length !== Days) {
+      return res
+        .status(400)
+        .json({ message: `You must select exactly ${Days} dates.` });
+    }
+
+    // Find the booking
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) {
+      return res.status(404).json({ message: "Booking not found." });
+    }
+
+    // Find the associated event owner
+    const eventOwner = await EventOwner.findById(booking.eventOwnerId);
+    if (!eventOwner || eventOwner.status !== "approved") {
+      return res
+        .status(404)
+        .json({ message: "Event owner not found or not approved." });
+    }
+
+    // Check availability for all selected dates
+    for (const date of eventDates) {
+      const availabilityEntry = eventOwner.availability.find((availability) => {
+        const availabilityDate = new Date(availability.date);
+        availabilityDate.setUTCHours(0, 0, 0, 0);
+        const selectedDate = new Date(date);
+        selectedDate.setUTCHours(0, 0, 0, 0);
+        return availabilityDate.getTime() === selectedDate.getTime();
+      });
+
+      if (availabilityEntry && !availabilityEntry.isAvailable) {
         return res
           .status(400)
-          .json({ message: "One or more event dates are invalid" });
-      }
-
-      // Check availability for the updated dates
-      const bookingOwner = await EventOwner.findById(req.params.eventOwnerId);
-      if (!bookingOwner) {
-        return res.status(404).json({ message: "Event owner not found" });
-      }
-
-      let availabilityCheck = true;
-      for (const date of newBookingDates) {
-        const availability = bookingOwner.availability.find(
-          (avail) =>
-            new Date(avail.date).toISOString() === new Date(date).toISOString()
-        );
-        if (!availability || !availability.isAvailable) {
-          availabilityCheck = false;
-          break;
-        }
-      }
-
-      if (!availabilityCheck) {
-        return res
-          .status(400)
-          .json({
-            message: "One or more of the event dates are not available",
-          });
+          .json({ message: `Date ${date} is not available for booking.` });
       }
     }
 
+    // Release previously booked dates
+    for (const date of booking.eventDates) {
+      const availabilityIndex = eventOwner.availability.findIndex(
+        (availability) => {
+          const availabilityDate = new Date(availability.date);
+          availabilityDate.setUTCHours(0, 0, 0, 0);
+          const bookedDate = new Date(date);
+          bookedDate.setUTCHours(0, 0, 0, 0);
+          return availabilityDate.getTime() === bookedDate.getTime();
+        }
+      );
+
+      if (availabilityIndex !== -1) {
+        eventOwner.availability[availabilityIndex].isAvailable = true;
+      }
+    }
+
+    // Update availability for the new booking dates
+    for (const date of eventDates) {
+      const availabilityIndex = eventOwner.availability.findIndex(
+        (availability) => {
+          const availabilityDate = new Date(availability.date);
+          availabilityDate.setUTCHours(0, 0, 0, 0);
+          const selectedDate = new Date(date);
+          selectedDate.setUTCHours(0, 0, 0, 0);
+          return availabilityDate.getTime() === selectedDate.getTime();
+        }
+      );
+
+      if (availabilityIndex !== -1) {
+        eventOwner.availability[availabilityIndex].isAvailable = false;
+      } else {
+        eventOwner.availability.push({
+          date: new Date(date),
+          isAvailable: false,
+        });
+      }
+    }
+
+    // Save the updated availability
+    await eventOwner.save();
+
     // Update the booking fields
-    const updatedBooking = await Booking.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      { new: true }
-    )
+    booking.eventDates = eventDates;
+    booking.Days = Days;
+    booking.totalAmount = eventOwner.pricing.basePrice * Days;
+    await booking.save();
+
+    // Populate the updated booking with related information
+    const updatedBooking = await Booking.findById(req.params.id)
       .populate("userId", "username email")
       .populate("eventOwnerId", "businessName businessType");
 
-    if (!updatedBooking)
-      return res.status(404).json({ message: "Booking not found" });
-
     res.status(200).json(updatedBooking);
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    console.error(error);
+    res.status(500).json({ message: error.message });
   }
 };
 
-// Delete a booking
+// Delete a booking and remove dates from event owner availability
 export const deleteBooking = async (req, res) => {
   try {
-    const deletedBooking = await Booking.findByIdAndDelete(req.params.id);
-    if (!deletedBooking)
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) {
       return res.status(404).json({ message: "Booking not found" });
+    }
+
+    // Find the event owner and remove dates from availability
+    const eventOwner = await EventOwner.findById(booking.eventOwnerId);
+    if (eventOwner) {
+      // Remove all booked dates from availability array
+      eventOwner.availability = eventOwner.availability.filter(availability => {
+        const availabilityDate = new Date(availability.date);
+        availabilityDate.setUTCHours(0, 0, 0, 0);
+        
+        return !booking.eventDates.some(bookedDate => {
+          const date = new Date(bookedDate);
+          date.setUTCHours(0, 0, 0, 0);
+          return date.getTime() === availabilityDate.getTime();
+        });
+      });
+
+      await eventOwner.save();
+    }
+
+    await booking.deleteOne();
     res.status(200).json({ message: "Booking deleted successfully" });
   } catch (error) {
     res.status(500).json({ message: error.message });
