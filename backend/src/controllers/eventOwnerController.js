@@ -1,5 +1,5 @@
+import mongoose from "mongoose";
 import EventOwner from "../models/EventOwnerDetails.js";
-
 /**
  * Create a new Event Owner
  */
@@ -15,8 +15,10 @@ export const createEventOwner = async (req, res) => {
       availability, // Default to an empty array if no availability is provided
     } = req.body;
 
-    const userId = req.user.id;
+    // console.log("req.user in createEventOwner:", req.user);
+    const userId = req.user._id;
 
+    console.log(userId);
     // Check if the user is already registered as an EventOwner
     const existingEventOwner = await EventOwner.findOne({ userId });
 
@@ -35,21 +37,48 @@ export const createEventOwner = async (req, res) => {
     }
 
     // Validate that required fields are present
-    if (!businessName || !businessType || !capacity || !pricing) {
+    if (!businessName || !businessType || !pricing) {
       return res.status(400).json({
         success: false,
         message: "Business name, type, capacity, and pricing are required",
       });
     }
 
-    // Default availability to an empty array if not provided
-    const eventAvailability = availability || [];
+    const imageUrls = req.files ? req.files.map((file) => file.path) : [];
+    console.log("Files received in createEventOwner:", req.files);
+    console.log("Image URLs:", imageUrls);
 
-     // Normalize availability dates if provided
-     const normalizedAvailability = availability.map((avail) => ({
-      date: new Date(avail.date), // Ensure the date is in Date format
-      isAvailable: avail.isAvailable, // true or false
-    }));
+    // Default availability to an empty array if not provided
+    const eventAvailability = Array.isArray(availability) ? availability : [];
+
+    if (availability) {
+      try {
+        // If availability is a stringified JSON, parse it
+        eventAvailability = typeof availability === "string"
+          ? JSON.parse(availability)
+          : availability;
+
+        // Normalize the availability data
+        eventAvailability = eventAvailability.map((avail) => {
+          const parsedDate = new Date(avail.date);
+
+          if (isNaN(parsedDate)) {
+            throw new Error(`Invalid date format in availability: ${avail.date}`);
+          }
+
+          return {
+            date: parsedDate, // Ensure the date is a Date object
+            isAvailable: avail.isAvailable || false, // Default to false if not provided
+          };
+        });
+      } catch (err) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid availability format. Must be an array of objects.",
+          error: err.message,
+        });
+      }
+    }
     // Create new EventOwner
     const newEventOwner = new EventOwner({
       userId,
@@ -60,6 +89,7 @@ export const createEventOwner = async (req, res) => {
       location,
       capacity,
       availability: normalizedAvailability,
+      eventImages: imageUrls,
     });
 
     await newEventOwner.save();
@@ -67,10 +97,13 @@ export const createEventOwner = async (req, res) => {
     res.status(201).json({ success: true, data: newEventOwner });
   } catch (error) {
     console.error("Error creating event owner:", error);
-    res.status(500).json({ success: false, message: "Failed to create event owner", error: error.message });
+    res.status(500).json({
+      success: false,
+      message: "Failed to create event owner",
+      error: error.message,
+    });
   }
 };
-
 
 /**
  * Get all registered Event Owners
@@ -78,7 +111,7 @@ export const createEventOwner = async (req, res) => {
 export const getAllEventOwners = async (req, res) => {
   try {
     // Fetch event owners with status 'approved' only
-    const eventOwners = await EventOwner.find({ status: 'approved' })
+    const eventOwners = await EventOwner.find({ status: "approved" })
       .populate("userId", "name email") // Populate user details
       .populate("reviews.userId", "name"); // Populate reviewer details
 
@@ -92,22 +125,44 @@ export const getAllEventOwners = async (req, res) => {
   }
 };
 
-/**
- * Get a specific Event Owner by ID
- */
 export const getEventOwnerById = async (req, res) => {
   try {
     const { id } = req.params;
-    const eventOwner = await EventOwner.findOne({ _id: id, status: 'approved' })
-      .populate("userId", "name email")
-      .populate("reviews.userId", "name");
-    if (!eventOwner) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Event Owner not found or not approved" });
+    let query = { _id: id };
+
+    // Log the incoming query
+    console.log("Initial Query: ", query);
+
+    // Check if the user is an admin or the owner of the business
+    const isOwner = await EventOwner.findOne({
+      _id: id,
+      userId: req.user?._id,
+    });
+
+    if (!req.user?.admin && !isOwner) {
+      // For regular users who are not the owner, only show approved businesses
+      query.status = "approved";
     }
+
+    console.log("Final Query: ", query);
+
+    const eventOwner = await EventOwner.findOne(query)
+      .populate("userId", "name email")
+      .populate("reviews", "rating comment userId") // Ensure reviews are populated correctly
+      .populate("reviews.userId", "name email");
+
+    console.log("Event Owner:", eventOwner);
+
+    if (!eventOwner) {
+      return res.status(404).json({
+        success: false,
+        message: "Event Owner not found",
+      });
+    }
+
     res.status(200).json({ success: true, data: eventOwner });
   } catch (error) {
+    console.error("Error fetching event owner:", error);
     res
       .status(500)
       .json({ success: false, message: "Failed to fetch event owner", error });
@@ -120,24 +175,57 @@ export const getEventOwnerById = async (req, res) => {
 export const updateEventOwner = async (req, res) => {
   try {
     const { id } = req.params;
-    const updatedData = req.body;
+    const updatedData = { ...req.body };
 
-    const eventOwner = await EventOwner.findByIdAndUpdate(id, updatedData, {
-      new: true,
-    });
-    if (req.user.id !== eventOwner.userId.toString()) {
-      return res
-        .status(403)
-        .json({
-          message: "Access denied. You can only update your own business.",
-        });
+    // Check if the user is the owner of the event
+    const eventOwner = await EventOwner.findById(id);
+    if (req.user._id.toString() !== eventOwner.userId.toString()) {
+      return res.status(403).json({
+        message: "Access denied. You can only update your own business.",
+      });
     }
-    if (!eventOwner) {
+
+    // Parse and normalize availability if provided
+    if (updatedData.availability) {
+      try {
+        let availability = typeof updatedData.availability === 'string' 
+          ? JSON.parse(updatedData.availability) 
+          : updatedData.availability;
+
+        updatedData.availability = availability.map(avail => ({
+          date: new Date(avail.date),
+          isAvailable: avail.isAvailable || false
+        }));
+      } catch (err) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid availability format",
+          error: err.message
+        });
+      }
+    }
+
+    // Update event images if provided
+    if (req.files && req.files.length > 0) {
+      const imageUrls = req.files.map((file) => file.path);
+      updatedData.eventImages = imageUrls;
+    }
+
+    const updatedEventOwner = await EventOwner.findByIdAndUpdate(
+      id,
+      updatedData,
+      {
+        new: true,
+      }
+    );
+
+    if (!updatedEventOwner) {
       return res
         .status(404)
         .json({ success: false, message: "Event Owner not found" });
     }
-    res.status(200).json({ success: true, data: eventOwner });
+
+    res.status(200).json({ success: true, data: updatedEventOwner });
   } catch (error) {
     res
       .status(500)
@@ -145,3 +233,8 @@ export const updateEventOwner = async (req, res) => {
   }
 };
 
+// Delete the event owner details
+
+export const deleteEventOwner = async (req, res) => {
+  
+}
