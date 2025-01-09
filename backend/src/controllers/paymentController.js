@@ -3,8 +3,23 @@ import Booking from '../models/Booking.js';
 
 export const processPayment = async (req, res) => {
   try {
-    const { userId, eventOwnerId, bookingId, totalAmount } = req.body;
+    const { userId,  bookingId, paymentMethod, paymentId } = req.body;
 
+    if (!userId || !bookingId || !paymentMethod || !paymentId) {
+      return res.status(400).json({ message: 'Missing required fields' });
+    }
+
+    const booking = await Booking.findById(bookingId);
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found' });
+    }
+
+       // Extract the totalAmount from the booking
+       const totalAmount = booking.totalAmount;
+       if (!totalAmount) {
+         return res.status(400).json({ message: 'Total amount not available in the booking' });
+       }
+   
     // Define commission percentage
     const commissionPercentage = 10;
     const adminCommission = (totalAmount * commissionPercentage) / 100;
@@ -13,15 +28,18 @@ export const processPayment = async (req, res) => {
     // Save payment details
     const payment = await Payment.create({
       userId,
-      eventOwnerId,
+      eventOwnerId: booking.eventOwnerId, // Get EventOwner from booking
       bookingId,
-      totalAmount,
-      adminCommission,
-      eventOwnerShare
+      amount: totalAmount,
+      commission,
+      ownerShare,
+      paymentStatus: 'paid',  // Default to 'paid'
+      paymentMethod,
+      paymentId,
     });
 
     // Update booking status
-    await Booking.findByIdAndUpdate(bookingId, { paymentStatus: 'success' });
+    await Booking.findByIdAndUpdate(bookingId, { status: 'success' });
 
     res.status(201).json({
       message: 'Payment processed successfully',
