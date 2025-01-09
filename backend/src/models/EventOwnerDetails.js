@@ -16,11 +16,13 @@ const eventOwnerSchema = new mongoose.Schema({
     state: String,
     country: String
   },
-  capacity: { type: Number, required: true }, // How many people the venue can host
+  capacity: { type: Number}, // How many people the venue can host
   availability: [{
     date: { type: Date, required: true }, // Specific date
     isAvailable: { type: Boolean, default: true } // Availability status
   }],
+  eventImages: [{ type: String }], // Array of image URLs
+  reviews: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Review' }],
   status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
   
   
